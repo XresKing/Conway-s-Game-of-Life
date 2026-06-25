@@ -5,13 +5,24 @@ import trimesh
 import viser
 from nicegui import ui
 
+import life_io
+from docs import build_docs
 from gamelogic import GameLogic, alive_coords
 from presets import (
+    PATTERN_CATEGORIES,
     PATTERN_NAMES,
     PATTERN_NAMES_3D,
+    offsets_to_coords,
     pattern_coords,
     pattern_coords_3d,
 )
+
+# 带分类标签的 2D 预设下拉选项（value=名字，label="分类 · 名字"）
+PRESET_OPTIONS_2D = {
+    name: f"{category.split()[0]} · {name}"
+    for category, group in PATTERN_CATEGORIES.items()
+    for name in group
+}
 
 
 # ----------------------------------------------------------------------------
@@ -298,6 +309,20 @@ class GameController:
         }
         self._render_edit()
 
+    def load_offsets(self, offsets):
+        """把外部导入的 2D 相对偏移 (dy, dx) 居中落到当前棋盘（仅 2D）。
+
+        返回落入边界内的细胞数；调用方据此提示用户。
+        """
+        if self.running or self.mode != "2D":
+            return 0
+        coords = offsets_to_coords(offsets, center=(self.H // 2, self.W // 2))
+        self.paint = {
+            (int(y), int(x)) for y, x in coords if self._in_bounds((int(y), int(x)))
+        }
+        self._render_edit()
+        return len(self.paint)
+
     def random_fill(self, density=0.15):
         if self.running:
             return
@@ -419,9 +444,15 @@ def index():
             "width:320px; min-width:320px; background:#ffffff; "
             "padding:24px; overflow-y:auto; border-right:1px solid #e0e0e0;"
         ):
-            with ui.column().classes("gap-0"):
-                ui.label("康威生命游戏").classes("gol-title")
-                ui.label("spconv · NiceGUI × Viser").classes("gol-sub")
+            with ui.row().classes("w-full items-start no-wrap"):
+                with ui.column().classes("gap-0"):
+                    ui.label("康威生命游戏").classes("gol-title")
+                    ui.label("spconv · NiceGUI × Viser").classes("gol-sub")
+                ui.space()
+                ui.link("文档 ↗", "/docs").props("target=_blank").style(
+                    "color:#0066cc;font-weight:600;font-size:13px;"
+                    "text-decoration:none;white-space:nowrap;margin-top:4px;"
+                )
 
             ui.label("维度模式").classes("gol-label")
             mode_toggle = ui.toggle(
@@ -429,8 +460,34 @@ def index():
             ).props("no-caps").classes("w-full")
 
             preset = ui.select(
-                PATTERN_NAMES, value="glider", label="预设图案"
+                PRESET_OPTIONS_2D, value="glider", label="预设图案"
             ).props("outlined dense").classes("w-full")
+
+            # ---- 导入外部图案（RLE / .cells / Life 1.06，自动识别）----------
+            with ui.expansion("导入外部图案", icon="upload_file").classes(
+                "w-full"
+            ).props("dense"):
+                ui.label(
+                    "粘贴 RLE / Plaintext / Life 1.06 文本，或上传文件（仅 2D）。"
+                ).classes("gol-sub")
+                import_text = ui.textarea(
+                    placeholder="x = 3, y = 3, rule = B3/S23\nbob$2bo$3o!"
+                ).props("outlined dense autogrow input-style=font-family:monospace").classes(
+                    "w-full"
+                )
+                with ui.row().classes("w-full no-wrap gap-2"):
+                    ui.button(
+                        "载入文本", on_click=lambda: _import(import_text.value)
+                    ).props("outline rounded no-caps dense").classes("w-full")
+                    ui.upload(
+                        on_upload=lambda e: _import(
+                            e.content.read().decode("utf-8", "ignore"),
+                            into=import_text,
+                        ),
+                        auto_upload=True,
+                    ).props('accept=".rle,.cells,.lif,.life,.txt" flat dense').classes(
+                        "w-full"
+                    )
 
             ui.label("边界").classes("gol-label")
             with ui.row().classes("w-full no-wrap gap-3"):
@@ -544,7 +601,7 @@ def index():
         _stop_timer()
         is_3d = e.value == "3D"
         d_in.set_visibility(is_3d)
-        preset.options = PATTERN_NAMES_3D if is_3d else PATTERN_NAMES
+        preset.options = PATTERN_NAMES_3D if is_3d else PRESET_OPTIONS_2D
         preset.value = (PATTERN_NAMES_3D if is_3d else PATTERN_NAMES)[0]
         preset.update()
         born_in.value = DEFAULTS[e.value]["born"]
@@ -558,6 +615,28 @@ def index():
         controller.reset()
         _apply_bounds()
         controller.load_preset(preset.value)
+
+    def _import(text, into=None):
+        if into is not None:
+            into.value = text  # 上传的文件内容回填到文本框，便于查看/微调
+        if controller.mode != "2D":
+            ui.notify("导入仅支持 2D 模式，请先切换到 2D 平面。", type="warning")
+            return
+        try:
+            offsets, fmt = life_io.parse_pattern(text)
+        except life_io.PatternParseError as exc:
+            ui.notify(f"解析失败：{exc}", type="negative")
+            return
+        _stop_timer()
+        controller.reset()
+        _apply_bounds()
+        n = controller.load_offsets(offsets)
+        if n == 0:
+            ui.notify("图案为空或全部落在边界外，试试调大边界。", type="warning")
+        else:
+            dropped = len(offsets) - n
+            extra = f"（{dropped} 个细胞超出边界被裁剪）" if dropped > 0 else ""
+            ui.notify(f"已导入 {fmt} 图案：{n} 个活细胞{extra}", type="positive")
 
     def _random():
         _stop_timer()
@@ -621,6 +700,17 @@ def index():
         )
 
     ui.timer(0.2, _refresh_status)  # 轮询刷新（画笔点击发生在 Viser 线程）
+
+
+@ui.page("/docs")
+def docs_page():
+    ui.add_head_html(HEAD)
+    # 文档页需要纵向滚动，覆盖主页那套 100vh/overflow:hidden 的全屏布局
+    ui.add_head_html(
+        "<style>.nicegui-content{height:auto !important;overflow:visible !important;}"
+        "html,body{height:auto !important;overflow-y:auto !important;}</style>"
+    )
+    build_docs()
 
 
 if __name__ == "__main__":
