@@ -3,7 +3,7 @@ import math
 import numpy as np
 import trimesh
 import viser
-from nicegui import ui
+from nicegui import app as nicegui_app, ui
 
 import life_io
 from docs import build_docs
@@ -16,6 +16,9 @@ from presets import (
     pattern_coords,
     pattern_coords_3d,
 )
+
+# 静态文件服务：将项目根目录挂载到 /static，用于访问 Logo.PNG 等资源
+nicegui_app.add_static_files("/static", ".")
 
 # 带分类标签的 2D 预设下拉选项（value=名字，label="分类 · 名字"）
 PRESET_OPTIONS_2D = {
@@ -714,4 +717,4 @@ def docs_page():
 
 
 if __name__ == "__main__":
-    ui.run(host="0.0.0.0", port=8080, title="康威生命游戏", reload=False, show=True)
+    ui.run(host="0.0.0.0", port=8080, title="康威生命游戏", reload=False, show=True, native=True,)
