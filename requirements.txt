@@ -1,0 +1,20 @@
+# 康威生命游戏 —— 运行依赖
+# 安装：python -m pip install -r requirements.txt
+#
+# 注意：torch 与 spconv 是与 CUDA 版本强绑定的二进制包。
+# 下面固定的是本机（CUDA 12.1）所用版本；换机器/换 CUDA 时请按官方说明改装：
+#   - PyTorch:  https://pytorch.org/get-started/locally/
+#   - spconv :  https://github.com/traveller59/spconv  （CPU 用 spconv-cpu）
+
+nicegui==3.13.0
+viser==1.0.30
+trimesh==4.12.2
+numpy==2.4.6
+
+# --- 与 CUDA 12.1 绑定（如无 GPU，改装 spconv-cpu 并安装 CPU 版 torch）---
+torch==2.5.1
+spconv-cu121==2.3.8
+
+# 打包用（可选）：
+# nicegui-pack 随 nicegui 一起提供；它在内部调用 pyinstaller
+pyinstaller>=6.0
